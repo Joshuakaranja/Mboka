@@ -15,6 +15,20 @@ class User(db.Model):
 
     worker_profile = db.relationship('WorkerProfile', backref='user', uselist=False)
 
+    #one to many relationships defined in Job and WorkerApplication models
+
+    jobs = db.relationship('Job', backref='client', lazy=True)
+
+    def serialize(self):
+        return {
+            "id": self.id,
+            "username": self.username,
+            "name": self.name,
+            "email": self.email,
+            "role": self.role,
+            "created_at": self.created_at.isoformat()
+        }
+
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
 

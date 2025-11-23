@@ -10,6 +10,8 @@ auth_bp = Blueprint("auth_bp", __name__, url_prefix="/auth")
 # -------------------------
 # AUTH DECORATOR
 # -------------------------
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -29,15 +31,22 @@ def login_required(f):
 # -------------------------
 # REGISTER
 # -------------------------
+
+
 @auth_bp.post("/register")
 def register():
-    data = request.json
+    data = request.json or {}
     username = data.get("username")
     email = data.get("email")
     password = data.get("password")
     role = data.get("role", "worker")  # default worker
 
-    if User.query.filter((User.username==username)|(User.email==email)).first():
+    # Basic validation to return clear client errors instead of 500s
+    if not username or not email or not password:
+        return jsonify({"error": "Missing required fields: username, email, password"}), 400
+
+    # Prevent duplicate users
+    if User.query.filter((User.username == username) | (User.email == email)).first():
         return jsonify({"error": "User already exists"}), 400
 
     new_user = User(
@@ -46,49 +55,73 @@ def register():
         password_hash=hash_password(password),
         role=role
     )
-    db.session.add(new_user)
-    db.session.commit()
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.exception("User registration failed")
+        return jsonify({"error": "Registration failed"}), 500
+
     return jsonify({"message": "User registered successfully"}), 201
 
 # -------------------------
 # LOGIN
 # -------------------------
+
+
 @auth_bp.post("/login")
 def login():
-    data = request.json
+    data = request.json or {}
     email = data.get("email")
     password = data.get("password")
 
-    user = User.query.filter_by(email=email).first()
-    if not user or not verify_password(user.password_hash, password):
-        return jsonify({"error": "Invalid credentials"}), 401
+    if not email or not password:
+        return jsonify({"error": "Missing required fields: email, password"}), 400
 
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
+    try:
+        user = User.query.filter_by(email=email).first()
+        if not user or not verify_password(user.password_hash, password):
+            return jsonify({"error": "Invalid credentials"}), 401
 
-    response = make_response(jsonify({"message": "Login successful"}))
-    # Set HTTP-only cookies
-    response.set_cookie(
-        "access_token",
-        access_token,
-        httponly=True,
-        samesite="Strict",
-        secure=current_app.config.get("ENV") == "production",
-        max_age=30*60  # 30 min
-    )
-    response.set_cookie(
-        "refresh_token",
-        refresh_token,
-        httponly=True,
-        samesite="Strict",
-        secure=current_app.config.get("ENV") == "production",
-        max_age=7*24*3600  # 7 days
-    )
-    return response
+        access_token = create_access_token(user.id)
+        refresh_token = create_refresh_token(user.id)
+
+        # Prepare JSON response: include tokens to simplify Postman testing.
+        resp_body = {
+            "message": "Login successful",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        }
+
+        response = make_response(jsonify(resp_body))
+        # Set HTTP-only cookies (always)
+        response.set_cookie(
+            "access_token",
+            access_token,
+            httponly=True,
+            samesite="Strict",
+            secure=current_app.config.get("ENV") == "production",
+            max_age=30*60  # 30 min
+        )
+        response.set_cookie(
+            "refresh_token",
+            refresh_token,
+            httponly=True,
+            samesite="Strict",
+            secure=current_app.config.get("ENV") == "production",
+            max_age=7*24*3600  # 7 days
+        )
+        return response
+    except Exception:
+        current_app.logger.exception("Login failed")
+        return jsonify({"error": "Login failed"}), 500
 
 # -------------------------
 # REFRESH ACCESS TOKEN
 # -------------------------
+
+
 @auth_bp.post("/refresh")
 def refresh():
     refresh_token = request.cookies.get("refresh_token")
@@ -117,6 +150,8 @@ def refresh():
 # -------------------------
 # LOGOUT
 # -------------------------
+
+
 @auth_bp.post("/logout")
 def logout():
     response = make_response(jsonify({"message": "Logged out"}))
@@ -127,6 +162,8 @@ def logout():
 # -------------------------
 # GET CURRENT USER
 # -------------------------
+
+
 @auth_bp.get("/me")
 @login_required
 def me(user):

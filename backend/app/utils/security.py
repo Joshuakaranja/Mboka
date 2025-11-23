@@ -7,6 +7,7 @@ from app.models.user import User
 
 # -------- PASSWORD SECURITY -------- #
 
+
 def hash_password(password: str) -> str:
     """Hash plain password using Werkzeug."""
     return generate_password_hash(password)
@@ -53,9 +54,16 @@ def login_required(f):
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.cookies.get("access_token")
+        # Accept token either from Authorization header (Bearer) or from cookies
+        token = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
+        else:
+            token = request.cookies.get("access_token")
+
         if not token:
-            return jsonify({"error": "Authentication required"}), 401
+            return jsonify({"error": "Authentication required. Provide 'Authorization: Bearer <token>' header or 'access_token' cookie."}), 401
         try:
             payload = decode_token(token)
             user = User.query.get(payload["sub"])

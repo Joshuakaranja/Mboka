@@ -1,74 +1,97 @@
 from flask import Blueprint, request, jsonify
-from app.extensions import db
+from sqlalchemy.orm import Session
 from app.models.job import Job
 from app.models.user import User
-from app.utils.security import login_required
+from config import engine
+from app.utils.auth_decorators import login_required
 
-jobs_bp = Blueprint("jobs_bp", __name__, url_prefix="/jobs")
+jobs_bp = Blueprint("jobs", __name__, url_prefix="/api/jobs")
 
-# ------------------------
-# Create Job
-# ------------------------
+# ---------------- CREATE JOB ---------------- #
 @jobs_bp.post("/")
 @login_required
-def create_job(current_user):
+def create_job(user_id):
     data = request.json
-    title = data.get("title")
-    description = data.get("description")
-    price = data.get("price")  # optional, AI may fill
-    location_lat = data.get("location_lat")
-    location_lng = data.get("location_lng")
 
-    if not all([title, description, location_lat, location_lng]):
-        return jsonify({"error": "Missing required fields"}), 400
+    required_fields = ["title", "description", "location"]
 
-    job = Job(
-        title=title,
-        description=description,
-        price=price,
-        location_lat=location_lat,
-        location_lng=location_lng,
-        client_id=current_user.id
-    )
+    # Validate
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"Missing field: {field}"}), 400
 
-    db.session.add(job)
-    db.session.commit()
-    return jsonify({"message": "Job created", "job_id": job.id}), 201
+    with Session(engine) as session:
+        job = Job(
+            title=data["title"],
+            description=data["description"],
+            location=data["location"],
+            user_id=user_id,
+        )
+        session.add(job)
+        session.commit()
 
-# ------------------------
-# List Jobs (with optional nearby filter)
-# ------------------------
+        return jsonify({"message": "Job created", "job": job.serialize()}), 201
+
+
+# ---------------- GET ALL JOBS ---------------- #
 @jobs_bp.get("/")
-def list_jobs():
-    # For now, simple: list all jobs
-    jobs = Job.query.filter(Job.status=="open").all()
-    result = []
-    for job in jobs:
-        result.append({
-            "id": job.id,
-            "title": job.title,
-            "description": job.description,
-            "price": job.price,
-            "location_lat": job.location_lat,
-            "location_lng": job.location_lng,
-            "status": job.status
-        })
-    return jsonify(result)
+def get_all_jobs():
+    with Session(engine) as session:
+        jobs = session.query(Job).all()
+        return jsonify([job.serialize() for job in jobs]), 200
 
-# ------------------------
-# Job Details
-# ------------------------
+
+# ---------------- GET SINGLE JOB ---------------- #
 @jobs_bp.get("/<int:job_id>")
-def job_detail(job_id):
-    job = Job.query.get_or_404(job_id)
-    return jsonify({
-        "id": job.id,
-        "title": job.title,
-        "description": job.description,
-        "price": job.price,
-        "location_lat": job.location_lat,
-        "location_lng": job.location_lng,
-        "status": job.status,
-        "client_id": job.client_id,
-        "worker_id": job.worker_id
-    })
+def get_single_job(job_id):
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+
+        return jsonify(job.serialize()), 200
+
+
+# ---------------- UPDATE JOB ---------------- #
+@jobs_bp.put("/<int:job_id>")
+@login_required
+def update_job(user_id, job_id):
+    data = request.json
+
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+
+        # Only owner can edit
+        if job.user_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        job.title = data.get("title", job.title)
+        job.description = data.get("description", job.description)
+        job.location = data.get("location", job.location)
+
+        session.commit()
+
+        return jsonify({"message": "Job updated", "job": job.serialize()}), 200
+
+
+# ---------------- DELETE JOB ---------------- #
+@jobs_bp.delete("/<int:job_id>")
+@login_required
+def delete_job(user_id, job_id):
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job.user_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        session.delete(job)
+        session.commit()
+
+        return jsonify({"message": "Job deleted"}), 200
