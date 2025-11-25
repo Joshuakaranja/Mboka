@@ -1,97 +1,101 @@
 from flask import Blueprint, request, jsonify
-from sqlalchemy.orm import Session
+from app.extensions import db
 from app.models.job import Job
-from app.models.user import User
-from config import engine
-from app.utils.auth_decorators import login_required
+from app.utils.security import login_required
 
-jobs_bp = Blueprint("jobs", __name__, url_prefix="/api/jobs")
+jobs_bp = Blueprint("jobs", __name__, url_prefix="/jobs")
+
 
 # ---------------- CREATE JOB ---------------- #
 @jobs_bp.post("/")
 @login_required
-def create_job(user_id):
-    data = request.json
+def create_job(current_user):
+    data = request.json or {}
 
     required_fields = ["title", "description", "location"]
 
-    # Validate
     for field in required_fields:
         if field not in data:
             return jsonify({"error": f"Missing field: {field}"}), 400
 
-    with Session(engine) as session:
-        job = Job(
-            title=data["title"],
-            description=data["description"],
-            location=data["location"],
-            user_id=user_id,
-        )
-        session.add(job)
-        session.commit()
+    # Accept either explicit lat/lng or a location string. For testing, if lat/lng
+    # are not provided, store 0.0 and keep the original location in metadata.
+    location_lat = data.get("location_lat")
+    location_lng = data.get("location_lng")
+    location_str = data.get("location")
+    if location_lat is None or location_lng is None:
+        location_lat = 0.0
+        location_lng = 0.0
 
-        return jsonify({"message": "Job created", "job": job.serialize()}), 201
+    job = Job(
+        title=data["title"],
+        description=data["description"],
+        price=data.get("price"),
+        location_lat=location_lat,
+        location_lng=location_lng,
+        client_id=current_user.id,
+        job_metadata={"location": location_str} if location_str else None,
+    )
+
+    db.session.add(job)
+    db.session.commit()
+
+    return jsonify({"message": "Job created", "job": job.serialize()}), 201
 
 
 # ---------------- GET ALL JOBS ---------------- #
 @jobs_bp.get("/")
 def get_all_jobs():
-    with Session(engine) as session:
-        jobs = session.query(Job).all()
-        return jsonify([job.serialize() for job in jobs]), 200
+    jobs = Job.query.all()
+    return jsonify([job.serialize() for job in jobs]), 200
 
 
 # ---------------- GET SINGLE JOB ---------------- #
 @jobs_bp.get("/<int:job_id>")
 def get_single_job(job_id):
-    with Session(engine) as session:
-        job = session.get(Job, job_id)
-
-        if not job:
-            return jsonify({"error": "Job not found"}), 404
-
-        return jsonify(job.serialize()), 200
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job.serialize()), 200
 
 
 # ---------------- UPDATE JOB ---------------- #
 @jobs_bp.put("/<int:job_id>")
 @login_required
-def update_job(user_id, job_id):
-    data = request.json
+def update_job(current_user, job_id):
+    data = request.json or {}
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
 
-    with Session(engine) as session:
-        job = session.get(Job, job_id)
+    # Only owner can edit
+    if job.client_id != current_user.id:
+        return jsonify({"error": "Unauthorized"}), 403
 
-        if not job:
-            return jsonify({"error": "Job not found"}), 404
+    job.title = data.get("title", job.title)
+    job.description = data.get("description", job.description)
+    job.price = data.get("price", job.price)
+    job.location_lat = data.get("location_lat", job.location_lat)
+    job.location_lng = data.get("location_lng", job.location_lng)
+    if data.get("location"):
+        job.job_metadata = job.job_metadata or {}
+        job.job_metadata["location"] = data.get("location")
 
-        # Only owner can edit
-        if job.user_id != user_id:
-            return jsonify({"error": "Unauthorized"}), 403
-
-        job.title = data.get("title", job.title)
-        job.description = data.get("description", job.description)
-        job.location = data.get("location", job.location)
-
-        session.commit()
-
-        return jsonify({"message": "Job updated", "job": job.serialize()}), 200
+    db.session.commit()
+    return jsonify({"message": "Job updated", "job": job.serialize()}), 200
 
 
 # ---------------- DELETE JOB ---------------- #
 @jobs_bp.delete("/<int:job_id>")
 @login_required
-def delete_job(user_id, job_id):
-    with Session(engine) as session:
-        job = session.get(Job, job_id)
+def delete_job(current_user, job_id):
+    job = Job.query.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
 
-        if not job:
-            return jsonify({"error": "Job not found"}), 404
+    if job.client_id != current_user.id:
+        return jsonify({"error": "Unauthorized"}), 403
 
-        if job.user_id != user_id:
-            return jsonify({"error": "Unauthorized"}), 403
-
-        session.delete(job)
-        session.commit()
-
-        return jsonify({"message": "Job deleted"}), 200
+    db.session.delete(job)
+    db.session.commit()
+    return jsonify({"message": "Job deleted"}), 200

@@ -21,11 +21,10 @@ def create_app():
     # Register blueprints with a single API prefix
     # auth_bp already uses the internal prefix '/auth', so register it under '/api'
     # to yield endpoints like '/api/auth/register'
+    # Register all blueprints under the common '/api' prefix so final
+    # endpoints are '/api/auth', '/api/workers', '/api/jobs', '/api/applications'
     app.register_blueprint(auth_bp, url_prefix='/api')
-    # yields /api/workers/... endpoint
     app.register_blueprint(worker_bp, url_prefix='/api')
-    # yields /api/jobs/... endpoint
-    app.register_blueprint(jobs_bp, url_prefix='/api/jobs')
-    # yields /api/applications/... endpoint
-    app.register_blueprint(application_bp, url_prefix='/api/applications')
+    app.register_blueprint(jobs_bp, url_prefix='/api')
+    app.register_blueprint(application_bp, url_prefix='/api')
     return app
