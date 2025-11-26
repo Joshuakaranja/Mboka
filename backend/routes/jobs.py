@@ -46,8 +46,27 @@ def create_job(current_user):
 # ---------------- GET ALL JOBS ---------------- #
 @jobs_bp.get("/")
 def get_all_jobs():
-    jobs = Job.query.all()
-    return jsonify([job.serialize() for job in jobs]), 200
+    # Pagination support
+    try:
+        page = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 20))
+    except ValueError:
+        return jsonify({"error": "Invalid pagination parameters"}), 400
+
+    if per_page > 100:
+        per_page = 100
+
+    pagination = Job.query.paginate(
+        page=page, per_page=per_page, error_out=False)
+    jobs = pagination.items
+    result = {
+        "items": [job.serialize() for job in jobs],
+        "page": page,
+        "per_page": per_page,
+        "total": pagination.total,
+        "pages": pagination.pages,
+    }
+    return jsonify(result), 200
 
 
 # ---------------- GET SINGLE JOB ---------------- #

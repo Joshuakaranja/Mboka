@@ -1,6 +1,10 @@
 from app.models import application
 from flask import Flask
 from app.extensions import db, migrate, jwt
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import logging
+from logging.handlers import RotatingFileHandler
 from app.config import Config
 
 
@@ -11,6 +15,21 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
+
+    # Basic logging configuration
+    if not app.debug:
+        handler = RotatingFileHandler(
+            'logs/kazilink.log', maxBytes=1000000, backupCount=3)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            '%(asctime)s %(levelname)s %(name)s %(message)s'
+        )
+        handler.setFormatter(formatter)
+        app.logger.addHandler(handler)
+
+    # Rate limiter (uses remote address by default)
+    limiter = Limiter(key_func=get_remote_address)
+    limiter.init_app(app)
 
     # Import blueprints inside factory to avoid import-time side effects
     from routes.auth import auth_bp

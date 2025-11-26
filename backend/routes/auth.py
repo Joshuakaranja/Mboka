@@ -2,6 +2,9 @@ from flask import Blueprint, request, jsonify, current_app, make_response
 from app.models.user import User
 from app.extensions import db
 from app.utils.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
+from app.schemas import RegisterSchema, LoginSchema
+from marshmallow import ValidationError
+from flask import g
 from functools import wraps
 import datetime
 
@@ -36,14 +39,16 @@ def login_required(f):
 @auth_bp.post("/register")
 def register():
     data = request.json or {}
-    username = data.get("username")
-    email = data.get("email")
-    password = data.get("password")
-    role = data.get("role", "worker")  # default worker
+    schema = RegisterSchema()
+    try:
+        validated = schema.load(data)
+    except ValidationError as err:
+        return jsonify({"error": "Invalid input", "details": err.messages}), 400
 
-    # Basic validation to return clear client errors instead of 500s
-    if not username or not email or not password:
-        return jsonify({"error": "Missing required fields: username, email, password"}), 400
+    username = validated["username"]
+    email = validated["email"]
+    password = validated["password"]
+    role = validated.get("role", "worker")
 
     # Prevent duplicate users
     if User.query.filter((User.username == username) | (User.email == email)).first():
@@ -73,11 +78,14 @@ def register():
 @auth_bp.post("/login")
 def login():
     data = request.json or {}
-    email = data.get("email")
-    password = data.get("password")
+    schema = LoginSchema()
+    try:
+        validated = schema.load(data)
+    except ValidationError as err:
+        return jsonify({"error": "Invalid input", "details": err.messages}), 400
 
-    if not email or not password:
-        return jsonify({"error": "Missing required fields: email, password"}), 400
+    email = validated["email"]
+    password = validated["password"]
 
     try:
         user = User.query.filter_by(email=email).first()
